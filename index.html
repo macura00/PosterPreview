@@ -65,6 +65,7 @@
     transition: all 0.18s ease;
   }
   #download-btn:hover { background: rgba(205,187,140,0.12); border-color: #cdbb8c; }
+  #download-btn:disabled { opacity: 0.55; cursor: wait; }
  
   .note {
     font-size: 11.5px; line-height: 1.6; color: #8f8468;
@@ -119,6 +120,9 @@
     const DISPLAY_WIDTH = 320;
     const DISPLAY_HEIGHT = Math.round(DISPLAY_WIDTH * (HEIGHT / WIDTH));
     const DPR = Math.min(window.devicePixelRatio || 1, 2);
+    // Scale factor used for the print/download export. 700x900 * 6 = 4200x5400px,
+    // which is ~300dpi for a 14x18in poster (and scales down cleanly for smaller prints).
+    const EXPORT_SCALE = 6;
     let currentShapeKind = 'zodiac';
  
     function seedFromString(str) {
@@ -415,14 +419,26 @@
       return { nx: -dy, ny: dx };
     }
  
-    async function buildCard(dateStr, shapeKind) {
-      const canvas = document.getElementById('card-canvas');
-      canvas.width = WIDTH * DPR;
-      canvas.height = HEIGHT * DPR;
-      canvas.style.width = DISPLAY_WIDTH + 'px';
-      canvas.style.height = DISPLAY_HEIGHT + 'px';
+    // buildCard now draws onto whatever canvas element you hand it, at
+    // whatever pixel-scale you ask for. The on-screen preview calls this
+    // with the visible <canvas> and the display's DPR (capped at 2x, since
+    // there's no point rendering a screen preview past what the monitor
+    // can show). The download button calls this with a fresh, detached
+    // canvas and a much higher EXPORT_SCALE, so the file that comes out
+    // is full resolution regardless of what the preview happened to be.
+    async function buildCard(dateStr, shapeKind, targetCanvas, pixelScale) {
+      const canvas = targetCanvas || document.getElementById('card-canvas');
+      const scale = pixelScale || DPR;
+      const isPreview = canvas.id === 'card-canvas';
+ 
+      canvas.width = WIDTH * scale;
+      canvas.height = HEIGHT * scale;
+      if (isPreview) {
+        canvas.style.width = DISPLAY_WIDTH + 'px';
+        canvas.style.height = DISPLAY_HEIGHT + 'px';
+      }
       const ctx = canvas.getContext('2d');
-      ctx.scale(DPR, DPR);
+      ctx.scale(scale, scale);
  
       const seed = seedFromString(dateStr + '::' + shapeKind);
       const rand = makeRand(seed);
@@ -723,6 +739,8 @@
  
       // ---- grain, applied last ----
       applyFilmGrain(ctx, WIDTH, HEIGHT, seed, cx, cy, RING_R);
+ 
+      return canvas;
     }
  
     function drawTracked(ctx, text, centerX, y, spacing) {
@@ -784,20 +802,50 @@
       });
     });
  
-
+ 
     const OWk = 'download1';
     const isOwner = new URLSearchParams(window.location.search).get('key') === OWk;
     if (isOwner) {
       document.getElementById('download-btn').style.display = '';
     }
  
-    document.getElementById('download-btn').addEventListener('click', () => {
-      const canvas = document.getElementById('card-canvas');
+    // High-res export: builds an entirely separate, detached canvas at
+    // EXPORT_SCALE (4200x5400px) rather than exporting whatever the small
+    // on-screen preview canvas happens to contain. toBlob is used instead
+    // of toDataURL since a canvas this large as a base64 string is slow
+    // and memory-heavy.
+    document.getElementById('download-btn').addEventListener('click', async () => {
+      const downloadBtn = document.getElementById('download-btn');
       const dateStr = document.getElementById('date-input').value;
-      const link = document.createElement('a');
-      link.download = `signature-of-the-sky-${dateStr}-${currentShapeKind}.png`;
-      link.href = canvas.toDataURL('image/png');
-      link.click();
+      const originalLabel = downloadBtn.textContent;
+ 
+      downloadBtn.disabled = true;
+      downloadBtn.textContent = 'Rendering…';
+ 
+      try {
+        const exportCanvas = document.createElement('canvas');
+        await buildCard(dateStr, currentShapeKind, exportCanvas, EXPORT_SCALE);
+ 
+        exportCanvas.toBlob((blob) => {
+          if (!blob) {
+            downloadBtn.textContent = originalLabel;
+            downloadBtn.disabled = false;
+            return;
+          }
+          const url = URL.createObjectURL(blob);
+          const link = document.createElement('a');
+          link.download = `signature-of-the-sky-${dateStr}-${currentShapeKind}-print.png`;
+          link.href = url;
+          link.click();
+          URL.revokeObjectURL(url);
+          downloadBtn.textContent = originalLabel;
+          downloadBtn.disabled = false;
+        }, 'image/png');
+      } catch (err) {
+        console.error('High-res export failed:', err);
+        downloadBtn.textContent = originalLabel;
+        downloadBtn.disabled = false;
+      }
     });
  
     const cardCanvas = document.getElementById('card-canvas');
@@ -809,4 +857,3 @@
   </script>
 </body>
 </html>
- 
