@@ -1,0 +1,811 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Skypaper — eclipse ring v4 (shape-agnostic)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;600&family=Cormorant+Garamond:wght@500;600&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: #0b0908; font-family: 'Cormorant Garamond', serif; }
+  body { min-height: 100vh; }
+ 
+  .panel {
+    position: fixed; top: 0; left: 0; width: 220px; height: 100vh;
+    overflow-y: auto; padding: 32px 20px; display: flex; flex-direction: column;
+    gap: 22px; color: #cfc3a3; background: #0e0b08;
+    border-right: 1px solid rgba(205,187,140,0.15);
+  }
+ 
+  .panel-title {
+    font-family: 'Cinzel', serif; font-size: 12px; letter-spacing: 3px;
+    text-transform: uppercase; color: #cdbb8c;
+    border-bottom: 1px solid rgba(205,187,140,0.25); padding-bottom: 12px;
+  }
+ 
+  .field label {
+    display: block; font-size: 10.5px; letter-spacing: 2px; text-transform: uppercase;
+    color: #8a7d5e; margin-bottom: 7px;
+  }
+  .field input[type="date"] {
+    width: 100%; background: #17130f; border: 1px solid rgba(205,187,140,0.35);
+    color: #e7dcc0; padding: 9px 10px; border-radius: 4px; font-size: 13px;
+    font-family: 'Cormorant Garamond', serif; color-scheme: dark;
+  }
+  .field input[type="date"]:focus { outline: none; border-color: #cdbb8c; }
+ 
+  .shape-tabs { display: flex; flex-direction: column; gap: 7px; }
+  .shape-tabs button {
+    text-align: left; background: rgba(255,255,255,0.02); color: #b7ab8c;
+    border: 1px solid rgba(205,187,140,0.2); border-radius: 4px; padding: 10px 12px;
+    font-size: 13.5px; font-family: 'Cormorant Garamond', serif; letter-spacing: 0.3px;
+    cursor: pointer; position: relative; transition: all 0.18s ease;
+  }
+  .shape-tabs button:hover { border-color: rgba(205,187,140,0.55); color: #e7dcc0; }
+  .shape-tabs button.active {
+    background: rgba(205,187,140,0.12); border-color: #cdbb8c; color: #f1e6c8;
+  }
+  .shape-tabs button.active::before {
+    content: ''; position: absolute; left: -1px; top: -1px; bottom: -1px; width: 3px;
+    background: #cdbb8c; border-radius: 4px 0 0 4px;
+  }
+ 
+  #redraw-btn {
+    background: #cdbb8c; color: #17130f; border: none; padding: 12px 14px;
+    border-radius: 4px; font-family: 'Cinzel', serif; font-size: 11px;
+    letter-spacing: 2px; text-transform: uppercase; cursor: pointer;
+    transition: background 0.18s ease;
+  }
+  #redraw-btn:hover { background: #e2d3a4; }
+ 
+  #download-btn {
+    background: transparent; color: #cdbb8c; border: 1px solid rgba(205,187,140,0.4);
+    padding: 11px 14px; border-radius: 4px; font-family: 'Cinzel', serif; font-size: 11px;
+    letter-spacing: 2px; text-transform: uppercase; cursor: pointer;
+    transition: all 0.18s ease;
+  }
+  #download-btn:hover { background: rgba(205,187,140,0.12); border-color: #cdbb8c; }
+ 
+  .note {
+    font-size: 11.5px; line-height: 1.6; color: #8f8468;
+    border-top: 1px solid rgba(205,187,140,0.2); padding-top: 14px;
+  }
+ 
+  .poster-wrap {
+    margin-left: 220px; min-height: 100vh; width: calc(100% - 220px);
+    display: flex; align-items: center; justify-content: center;
+    padding: 40px; overflow: auto; background: #141210;
+  }
+  canvas {
+    box-shadow: 0 8px 40px rgba(0,0,0,0.6); border-radius: 4px; flex-shrink: 0;
+    -webkit-user-drag: none; user-select: none;
+  }
+</style>
+</head>
+<body>
+ 
+  <div class="panel">
+    <div class="panel-title">Choose Your View</div>
+ 
+    <div class="field">
+      <label for="date-input">Birthdate</label>
+      <input type="date" id="date-input" value="2000-06-14">
+    </div>
+ 
+    <div class="shape-tabs" id="shape-tabs">
+      <button data-shape="zodiac" class="active">Zodiac Constellation</button>
+      <button data-shape="moon">Moon Phase</button>
+      <button data-shape="numerology">Life Path Number</button>
+    </div>
+ 
+    <button id="redraw-btn">Regenerate</button>
+    <button id="download-btn" style="display:none;">Download</button>
+ 
+    <p class="note">
+      Every birth has its own sky. This one is traced from the constellation
+      overhead, the exact shape of the moon, and the number folded into your
+      birthdate — three different signatures of the same moment, drawn as
+      one line of light.
+    </p>
+  </div>
+ 
+  <div class="poster-wrap">
+    <canvas id="card-canvas"></canvas>
+  </div>
+ 
+  <script>
+    const WIDTH = 700, HEIGHT = 900;
+    const DISPLAY_WIDTH = 320;
+    const DISPLAY_HEIGHT = Math.round(DISPLAY_WIDTH * (HEIGHT / WIDTH));
+    const DPR = Math.min(window.devicePixelRatio || 1, 2);
+    let currentShapeKind = 'zodiac';
+ 
+    function seedFromString(str) {
+      let hash = 0;
+      for (let i = 0; i < str.length; i++) hash = (Math.imul(31, hash) + str.charCodeAt(i)) | 0;
+      return Math.abs(hash) || 1;
+    }
+ 
+    function makeRand(seed) {
+      let s = seed;
+      return () => {
+        s |= 0; s = (s + 0x6D2B79F5) | 0;
+        let t = Math.imul(s ^ (s >>> 15), 1 | s);
+        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+      };
+    }
+ 
+    function gaussianJitter(rand, spread) {
+      return ((rand() + rand() + rand() - 1.5) / 1.5) * spread;
+    }
+ 
+    function lerp(a, b, t) { return a + (b - a) * t; }
+    function clamp8(v) { return v < 0 ? 0 : v > 255 ? 255 : v; }
+ 
+    // ============================================================
+    // SHAPE LAYER — every shape exposes posAt(t) for t in [0,1] and
+    // a `closed` flag. Everything downstream (ring stroke, halo,
+    // particle passes, edge disruption, flare placement) only ever
+    // talks to this interface, never to raw circle trig.
+    // ============================================================
+ 
+    function circleShape(cx, cy, r) {
+      return (t) => {
+        const a = t * Math.PI * 2 - Math.PI / 2;
+        return { x: cx + r * Math.cos(a), y: cy + r * Math.sin(a) };
+      };
+    }
+ 
+    function infinityShape(cx, cy, a) {
+      return (t) => {
+        const angle = t * Math.PI * 2;
+        const s = Math.sin(angle);
+        const denom = 1 + s * s;
+        return {
+          x: cx + (a * Math.cos(angle)) / denom,
+          y: cy + (a * s * Math.cos(angle)) / denom,
+        };
+      };
+    }
+ 
+    // Generic piecewise-linear path through a list of vertices — used for
+    // star and square. `closed` wraps t back to the first vertex.
+    function polylineShape(vertices, closed) {
+      const verts = closed ? [...vertices, vertices[0]] : vertices;
+      const segs = verts.length - 1;
+      return (t) => {
+        let tt = closed ? ((t % 1) + 1) % 1 : Math.min(1, Math.max(0, t));
+        const scaled = tt * segs;
+        let i = Math.floor(scaled);
+        if (i >= segs) i = segs - 1;
+        const frac = scaled - i;
+        const p0 = verts[i], p1 = verts[i + 1];
+        return { x: lerp(p0.x, p1.x, frac), y: lerp(p0.y, p1.y, frac) };
+      };
+    }
+ 
+    function starVertices(cx, cy, points, outerR, innerR) {
+      const verts = [];
+      const n = points * 2;
+      for (let i = 0; i < n; i++) {
+        const r = i % 2 === 0 ? outerR : innerR;
+        const angle = (i / n) * Math.PI * 2 - Math.PI / 2;
+        verts.push({ x: cx + r * Math.cos(angle), y: cy + r * Math.sin(angle) });
+      }
+      return verts;
+    }
+ 
+    function squareVertices(cx, cy, half) {
+      return [
+        { x: cx - half, y: cy - half },
+        { x: cx + half, y: cy - half },
+        { x: cx + half, y: cy + half },
+        { x: cx - half, y: cy + half },
+      ];
+    }
+ 
+    // Open S-curve via a cubic bezier — demonstrates the system also
+    // supports non-closed paths (tapering ends instead of wrapping).
+    function curveShape(cx, cy, spanWidth, amplitude) {
+      const p0 = { x: cx - spanWidth / 2, y: cy + amplitude * 0.55 };
+      const p1 = { x: cx - spanWidth / 6, y: cy - amplitude };
+      const p2 = { x: cx + spanWidth / 6, y: cy + amplitude };
+      const p3 = { x: cx + spanWidth / 2, y: cy - amplitude * 0.55 };
+      return (t) => {
+        const tt = Math.min(1, Math.max(0, t));
+        const u = 1 - tt;
+        const x = u*u*u*p0.x + 3*u*u*tt*p1.x + 3*u*tt*tt*p2.x + tt*tt*tt*p3.x;
+        const y = u*u*u*p0.y + 3*u*u*tt*p1.y + 3*u*tt*tt*p2.y + tt*tt*tt*p3.y;
+        return { x, y };
+      };
+    }
+ 
+    // ------------------------------------------------------------
+    // DATE-DERIVED SHAPES — zodiac constellation, moon phase, and
+    // numerology life-path number, all computed from the birthdate
+    // rather than picked off a fixed list.
+    // ------------------------------------------------------------
+ 
+    // Simplified traditional stick-figure line-drawings for the 12
+    // zodiac constellations, in normalized (-1..1) space, listed in
+    // the order the line is traditionally drawn through the stars.
+    // These are stylized approximations of the classic star-chart
+    // asterisms (this page has no live star-catalog access), not
+    // precise RA/Dec projections — but the shape of each is drawn
+    // from the real constellation figure, not invented.
+    const ZODIAC_STARS = {
+      aries:       [[-0.90,0.35],[-0.35,-0.05],[0.15,-0.55],[0.75,-0.75]],
+      taurus:      [[-0.90,-0.60],[-0.55,0.15],[-0.15,0.55],[0.25,0.05],[0.55,-0.55],[0.85,-0.90]],
+      gemini:      [[-0.55,-0.90],[-0.55,-0.10],[-0.30,0.55],[0.30,0.55],[0.55,-0.10],[0.55,-0.90]],
+      cancer:      [[-0.60,-0.50],[-0.15,0.05],[0.05,0.65],[0.05,0.05],[0.55,-0.55]],
+      leo:         [[-0.85,0.55],[-0.55,0.75],[-0.25,0.55],[-0.20,0.05],[-0.50,-0.35],[-0.85,-0.15],[-0.55,0.35],[0.35,-0.05],[0.85,-0.55]],
+      virgo:       [[-0.85,0.65],[-0.55,0.15],[-0.15,0.45],[0.05,-0.05],[-0.15,-0.55],[0.35,-0.75],[0.65,-0.25],[0.85,0.35]],
+      libra:       [[-0.75,-0.35],[-0.20,0.55],[0.20,0.55],[0.75,-0.35],[-0.20,-0.65],[0.20,-0.65]],
+      scorpius:    [[-0.90,0.65],[-0.65,0.15],[-0.30,-0.05],[0.05,0.05],[0.35,-0.15],[0.60,-0.50],[0.75,-0.85],[0.55,-0.60]],
+      sagittarius: [[-0.75,0.05],[-0.35,0.55],[-0.05,0.35],[0.15,0.65],[0.45,0.35],[0.15,0.05],[0.45,-0.15],[-0.35,-0.35]],
+      capricornus: [[-0.85,-0.15],[-0.40,0.45],[0.10,0.65],[0.50,0.15],[0.75,-0.35],[0.35,-0.65],[-0.15,-0.55]],
+      aquarius:    [[-0.75,0.65],[-0.35,0.15],[0.05,0.55],[0.35,-0.05],[0.15,-0.55],[0.55,-0.25],[0.85,-0.65]],
+      pisces:      [[-0.85,-0.55],[-0.35,-0.05],[-0.15,0.45],[0.15,0.60],[0.45,0.30],[0.15,-0.10],[0.55,-0.35],[0.85,-0.70]],
+    };
+ 
+    const ZODIAC_INFO = {
+      aries:       { symbol: '♈', range: 'MAR 21 – APR 19' },
+      taurus:      { symbol: '♉', range: 'APR 20 – MAY 20' },
+      gemini:      { symbol: '♊', range: 'MAY 21 – JUN 20' },
+      cancer:      { symbol: '♋', range: 'JUN 21 – JUL 22' },
+      leo:         { symbol: '♌', range: 'JUL 23 – AUG 22' },
+      virgo:       { symbol: '♍', range: 'AUG 23 – SEP 22' },
+      libra:       { symbol: '♎', range: 'SEP 23 – OCT 22' },
+      scorpius:    { symbol: '♏', range: 'OCT 23 – NOV 21' },
+      sagittarius: { symbol: '♐', range: 'NOV 22 – DEC 21' },
+      capricornus: { symbol: '♑', range: 'DEC 22 – JAN 19' },
+      aquarius:    { symbol: '♒', range: 'JAN 20 – FEB 18' },
+      pisces:      { symbol: '♓', range: 'FEB 19 – MAR 20' },
+    };
+ 
+    function getZodiacSign(dateStr) {
+      const [, m, d] = dateStr.split('-').map(Number);
+      const md = m * 100 + d;
+      if (md >= 321 && md <= 419) return 'aries';
+      if (md >= 420 && md <= 520) return 'taurus';
+      if (md >= 521 && md <= 620) return 'gemini';
+      if (md >= 621 && md <= 722) return 'cancer';
+      if (md >= 723 && md <= 822) return 'leo';
+      if (md >= 823 && md <= 922) return 'virgo';
+      if (md >= 923 && md <= 1022) return 'libra';
+      if (md >= 1023 && md <= 1121) return 'scorpius';
+      if (md >= 1122 && md <= 1221) return 'sagittarius';
+      if (md >= 1222 || md <= 119) return 'capricornus';
+      if (md >= 120 && md <= 218) return 'aquarius';
+      return 'pisces';
+    }
+ 
+    // Real synodic-month math: phase 0 = new moon, 0.5 = full moon,
+    // anchored to a known new moon (Jan 6 2000, 18:14 UTC).
+    function getMoonPhase(dateStr) {
+      const date = new Date(dateStr + 'T12:00:00Z');
+      const knownNewMoon = Date.UTC(2000, 0, 6, 18, 14, 0);
+      const synodicMonth = 29.53058867;
+      const diffDays = (date.getTime() - knownNewMoon) / 86400000;
+      let phase = (diffDays % synodicMonth) / synodicMonth;
+      if (phase < 0) phase += 1;
+      return phase;
+    }
+ 
+    function moonPhaseName(phase) {
+      const names = ['NEW MOON','WAXING CRESCENT','FIRST QUARTER','WAXING GIBBOUS',
+                      'FULL MOON','WANING GIBBOUS','LAST QUARTER','WANING CRESCENT'];
+      return names[Math.floor(phase * 8 + 0.5) % 8];
+    }
+ 
+    // Limb (true circle arc) + terminator (ellipse arc) combined into
+    // one closed outline — the standard construction for a crescent
+    // or gibbous moon silhouette from an illumination fraction.
+    function moonPhaseShape(cx, cy, r, phase) {
+      const k = (1 - Math.cos(2 * Math.PI * phase)) / 2; // illuminated fraction
+      const waxing = phase < 0.5;
+      const side = waxing ? 1 : -1;
+      const rx = r * Math.abs(1 - 2 * k);
+      const bulgeSign = k < 0.5 ? side : -side;
+      return (t) => {
+        if (t <= 0.5) {
+          const phi = lerp(-Math.PI / 2, Math.PI / 2, t * 2);
+          return { x: cx + side * r * Math.cos(phi), y: cy + r * Math.sin(phi) };
+        }
+        const phi = lerp(Math.PI / 2, -Math.PI / 2, (t - 0.5) * 2);
+        return { x: cx + bulgeSign * rx * Math.cos(phi), y: cy + r * Math.sin(phi) };
+      };
+    }
+ 
+    // Numerology life-path number: sum every digit of the date, then
+    // keep reducing to a single digit. Used as the point-count of the
+    // existing star shape (min 3, since a star needs at least 3 points).
+    function lifePathNumber(dateStr) {
+      let sum = dateStr.replace(/-/g, '').split('').reduce((a, ch) => a + Number(ch), 0);
+      while (sum > 9) sum = String(sum).split('').reduce((a, ch) => a + Number(ch), 0);
+      return sum;
+    }
+ 
+    function buildShape(kind, cx, cy, dateStr) {
+      switch (kind) {
+        case 'infinity':
+          return { posAt: infinityShape(cx, cy, 190), closed: true };
+        case 'star':
+          return { posAt: polylineShape(starVertices(cx, cy, 5, 218, 88), true), closed: true };
+        case 'square':
+          return { posAt: polylineShape(squareVertices(cx, cy, 205), true), closed: true };
+        case 'curve':
+          return { posAt: curveShape(cx, cy, 480, 170), closed: false };
+        case 'zodiac': {
+          const sign = getZodiacSign(dateStr);
+          const verts = ZODIAC_STARS[sign].map(([x, y]) => ({ x: cx + x * 210, y: cy + y * 210 }));
+          return { posAt: polylineShape(verts, false), closed: false, meta: { sign } };
+        }
+        case 'moon': {
+          const phase = getMoonPhase(dateStr);
+          return { posAt: moonPhaseShape(cx, cy, 200, phase), closed: true, meta: { phase } };
+        }
+        case 'numerology': {
+          const n = lifePathNumber(dateStr);
+          const points = Math.max(3, n);
+          return { posAt: polylineShape(starVertices(cx, cy, points, 215, 88), true), closed: true, meta: { number: n } };
+        }
+        case 'circle':
+        default:
+          return { posAt: circleShape(cx, cy, 210), closed: true };
+      }
+    }
+ 
+    // Arc-length sampler: builds a lookup table so we can map a normalized
+    // arc-length position s (0..1, evenly spaced along the actual path
+    // length) to the shape's native parameter t. This is what keeps
+    // particle density even on shapes like the star, where raw t moves at
+    // very different speeds around corners vs flat edges.
+    function buildArcLengthSampler(posAt, samples = 600) {
+      const pts = [];
+      for (let i = 0; i <= samples; i++) {
+        const t = i / samples;
+        pts.push({ t, p: posAt(t) });
+      }
+      const cum = [0];
+      for (let i = 1; i < pts.length; i++) {
+        const dx = pts[i].p.x - pts[i - 1].p.x;
+        const dy = pts[i].p.y - pts[i - 1].p.y;
+        cum.push(cum[i - 1] + Math.hypot(dx, dy));
+      }
+      const total = cum[cum.length - 1] || 1;
+      function sToT(s) {
+        const target = Math.min(Math.max(s, 0), 1) * total;
+        let lo = 0, hi = cum.length - 1;
+        while (lo < hi) {
+          const mid = (lo + hi) >> 1;
+          if (cum[mid] < target) lo = mid + 1; else hi = mid;
+        }
+        const i = Math.max(1, lo);
+        const segLen = cum[i] - cum[i - 1] || 1e-6;
+        const frac = (target - cum[i - 1]) / segLen;
+        return pts[i - 1].t + (pts[i].t - pts[i - 1].t) * frac;
+      }
+      return { sToT, total };
+    }
+ 
+    function computeCentroid(posAt, samples = 240) {
+      let sx = 0, sy = 0;
+      for (let i = 0; i < samples; i++) {
+        const p = posAt(i / samples);
+        sx += p.x; sy += p.y;
+      }
+      return { x: sx / samples, y: sy / samples };
+    }
+ 
+    // Direction tangent to the path at t, plus a normal — sign of the
+    // normal is not yet meaningful (perpendicular has two directions);
+    // outwardNormalAt() below picks the one pointing away from center.
+    function tangentAt(posAt, t, closed) {
+      const eps = 0.0015;
+      let t0 = t - eps, t1 = t + eps;
+      if (closed) { t0 = ((t0 % 1) + 1) % 1; t1 = ((t1 % 1) + 1) % 1; }
+      else { t0 = Math.max(0, t0); t1 = Math.min(1, t1); }
+      const p0 = posAt(t0), p1 = posAt(t1);
+      let dx = p1.x - p0.x, dy = p1.y - p0.y;
+      const len = Math.hypot(dx, dy) || 1;
+      dx /= len; dy /= len;
+      return { nx: -dy, ny: dx };
+    }
+ 
+    async function buildCard(dateStr, shapeKind) {
+      const canvas = document.getElementById('card-canvas');
+      canvas.width = WIDTH * DPR;
+      canvas.height = HEIGHT * DPR;
+      canvas.style.width = DISPLAY_WIDTH + 'px';
+      canvas.style.height = DISPLAY_HEIGHT + 'px';
+      const ctx = canvas.getContext('2d');
+      ctx.scale(DPR, DPR);
+ 
+      const seed = seedFromString(dateStr + '::' + shapeKind);
+      const rand = makeRand(seed);
+ 
+      await document.fonts.load("500 19px 'Cinzel'");
+      await document.fonts.load("500 15px 'Cormorant Garamond'");
+ 
+      const cx = WIDTH / 2, cy = 440;
+      const RING_R = 245;
+ 
+      // ---- outer mat: everything outside the ring gets this color ----
+      ctx.fillStyle = '#f2e8d4';
+      ctx.fillRect(0, 0, WIDTH, HEIGHT);
+ 
+      // ---- everything from here down (night sky, shape, particles,
+      // flare) is clipped to the circle so it reads as a framed disc ----
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(cx, cy, RING_R, 0, Math.PI * 2);
+      ctx.clip();
+ 
+      // ---- background, inside the circle ----
+      const bgGrad = ctx.createRadialGradient(cx, cy - RING_R * 0.3, 0, cx, cy, RING_R * 1.3);
+      bgGrad.addColorStop(0, '#100e0c');
+      bgGrad.addColorStop(1, '#020202');
+      ctx.fillStyle = bgGrad;
+      ctx.fillRect(0, 0, WIDTH, HEIGHT);
+ 
+      // ---- build the shape + its arc-length sampler + centroid ----
+      const shape = buildShape(shapeKind, cx, cy, dateStr);
+      const sampler = buildArcLengthSampler(shape.posAt);
+      const centroid = computeCentroid(shape.posAt);
+ 
+      function wrapS(s) {
+        return shape.closed ? ((s % 1) + 1) % 1 : Math.min(1, Math.max(0, s));
+      }
+ 
+      function outwardNormalAt(t, p) {
+        const { nx, ny } = tangentAt(shape.posAt, t, shape.closed);
+        const dx = p.x - centroid.x, dy = p.y - centroid.y;
+        const dot = nx * dx + ny * dy;
+        const sign = dot < 0 ? -1 : 1;
+        return { nx: nx * sign, ny: ny * sign };
+      }
+ 
+      // where the "flare" sits along the path, as an arc-length fraction.
+      // closed shapes: anywhere. open shapes: kept off the very ends so
+      // the frame stays well-defined.
+      const flareS = shape.closed ? rand() : 0.15 + rand() * 0.7;
+      const spreadFrac = 0.15;
+ 
+      function brightnessAt(s) {
+        let d = Math.abs(s - flareS);
+        if (shape.closed) d = Math.min(d, 1 - d);
+        return Math.exp(-(d * d) / (2 * spreadFrac * spreadFrac));
+      }
+ 
+      function strokeWidthAt(b) { return lerp(0.9, 5.5, b); }
+ 
+      // ---- ambient dust ----
+      const dustCount = 110;
+      for (let i = 0; i < dustCount; i++) {
+        const x = rand() * WIDTH;
+        const y = rand() * HEIGHT * 0.9;
+        const r = 0.25 + rand() * 0.65;
+        const op = 0.08 + rand() * 0.4;
+        if (i % 18 === 0) {
+          const glow = ctx.createRadialGradient(x, y, 0, x, y, r * 4);
+          glow.addColorStop(0, `rgba(255,246,214,${op * 0.4})`);
+          glow.addColorStop(1, 'rgba(255,246,214,0)');
+          ctx.fillStyle = glow;
+          ctx.beginPath(); ctx.arc(x, y, r * 4, 0, Math.PI * 2); ctx.fill();
+        }
+        ctx.fillStyle = `rgba(245,236,207,${op})`;
+        ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+      }
+ 
+      // ---- soft wide halo behind the path ----
+      ctx.save();
+      ctx.filter = 'blur(24px)';
+      ctx.beginPath();
+      const haloSamples = 320;
+      for (let i = 0; i <= haloSamples; i++) {
+        const t = sampler.sToT(wrapS(i / haloSamples));
+        const p = shape.posAt(t);
+        if (i === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y);
+      }
+      if (shape.closed) ctx.closePath();
+      ctx.strokeStyle = 'rgba(232, 217, 168, 0.3)';
+      ctx.lineWidth = 10;
+      ctx.stroke();
+      ctx.restore();
+ 
+      // ---- the path itself: one continuous line, drawn as many tiny
+      // overlapping segments so its width varies smoothly along its length ----
+      const segments = 540;
+      for (let i = 0; i < segments; i++) {
+        const s0 = wrapS(i / segments);
+        const s1 = wrapS((i + 1.4) / segments);
+        const mid = wrapS((i + 0.7) / segments);
+        const b = brightnessAt(mid);
+ 
+        const width = strokeWidthAt(b);
+        const cr = lerp(110, 255, b), cg = lerp(90, 246, b), cb = lerp(60, 210, b);
+        const alpha = lerp(0.55, 1, b);
+ 
+        const p0 = shape.posAt(sampler.sToT(s0));
+        const p1 = shape.posAt(sampler.sToT(s1));
+        ctx.beginPath();
+        ctx.moveTo(p0.x, p0.y);
+        ctx.lineTo(p1.x, p1.y);
+        ctx.strokeStyle = `rgba(${cr|0},${cg|0},${cb|0},${alpha.toFixed(2)})`;
+        ctx.lineWidth = width;
+        ctx.lineCap = 'round';
+        ctx.stroke();
+      }
+ 
+      // ---- generic particle scatterer used by every dust/speckle pass
+      // below. `offset` is a signed distance along the outward normal:
+      // negative = inward, positive = outward, 0 = right on the path.
+      // `styleFn` returns {size, alpha, color} in one call so any dark/light
+      // decision made for color stays consistent with size, and everything
+      // stays on the single seeded RNG (no Math.random() anywhere). ----
+      function scatterOnPath({ count, probFn, offsetFn, styleFn }) {
+        for (let i = 0; i < count; i++) {
+          const s = wrapS(rand());
+          const b = brightnessAt(s);
+          if (rand() > probFn(b)) continue;
+ 
+          const t = sampler.sToT(s);
+          const p = shape.posAt(t);
+          const { nx, ny } = outwardNormalAt(t, p);
+          const offset = offsetFn(b, rand);
+          const x = p.x + nx * offset;
+          const y = p.y + ny * offset;
+ 
+          const { size, color } = styleFn(b, rand);
+          ctx.fillStyle = color;
+          ctx.beginPath();
+          ctx.arc(x, y, size, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+ 
+      // fine particle texture ON the path, brighter near the flare
+      scatterOnPath({
+        count: 1400,
+        probFn: (b) => 0.15 + b * 0.85,
+        offsetFn: (b, r) => gaussianJitter(r, lerp(1.2, 3, b)),
+        styleFn: (b, r) => {
+          const size = lerp(0.25, 0.9, b) * (0.5 + r() * 0.7);
+          const alpha = lerp(0.2, 0.8, b) * (0.4 + r() * 0.6);
+          const cr = lerp(150, 255, b), cg = lerp(130, 246, b), cb = lerp(90, 214, b);
+          return { size, color: `rgba(${cr|0},${cg|0},${cb|0},${alpha.toFixed(2)})` };
+        },
+      });
+ 
+      // sharp light/dark speckles riding the path itself, tightly hugging it
+      scatterOnPath({
+        count: 2600,
+        probFn: (b) => 0.45 + b * 0.55,
+        offsetFn: (b, r) => gaussianJitter(r, lerp(0.7, 2.2, b)),
+        styleFn: (b, r) => {
+          const dark = r() < lerp(0.8, 0.2, b);
+          const size = 0.3 + r() * (dark ? 0.7 : 0.6);
+          const alpha = lerp(0.4, 0.98, r());
+          const color = dark ? `rgba(8,6,4,${alpha.toFixed(2)})` : `rgba(255,253,242,${alpha.toFixed(2)})`;
+          return { size, color };
+        },
+      });
+ 
+      // edge-breaker: dark dots along inner/outer edge, breaking the clean border
+      scatterOnPath({
+        count: 1600,
+        probFn: (b) => b * b,
+        offsetFn: (b, r) => {
+          const side = r() < 0.5 ? -1 : 1;
+          return side * (strokeWidthAt(b) / 2 + r() * 1.8);
+        },
+        styleFn: (b, r) => {
+          const size = 0.35 + r() * 0.75;
+          const alpha = lerp(0.45, 0.95, r());
+          return { size, color: `rgba(6,5,3,${alpha.toFixed(2)})` };
+        },
+      });
+ 
+      // inner-edge disruption: dense, tight-to-edge, blends into the dark background
+      scatterOnPath({
+        count: 3200,
+        probFn: (b) => Math.pow(b, 1.3),
+        offsetFn: (b, r) => -(strokeWidthAt(b) / 2 + Math.pow(r(), 2.4) * lerp(3, 9, b)),
+        styleFn: (b, r) => {
+          const size = 0.4 + r() * 0.9;
+          const alpha = lerp(0.5, 1, r());
+          return { size, color: `rgba(16,13,10,${alpha.toFixed(2)})` };
+        },
+      });
+ 
+      // outer-edge disruption: mirror pass, warm gold to blend into the halo
+      scatterOnPath({
+        count: 3200,
+        probFn: (b) => Math.pow(b, 1.3),
+        offsetFn: (b, r) => (strokeWidthAt(b) / 2 + Math.pow(r(), 2.4) * lerp(3, 9, b)),
+        styleFn: (b, r) => {
+          const size = 0.4 + r() * 0.9;
+          const alpha = lerp(0.45, 0.95, r());
+          return { size, color: `rgba(238,222,178,${alpha.toFixed(2)})` };
+        },
+      });
+ 
+      // deconstruction dust: light flecks breaking away outward near the flare
+      scatterOnPath({
+        count: 1100,
+        probFn: (b) => Math.pow(b, 1.6),
+        offsetFn: (b, r) => -Math.log(1 - r() * 0.98) * lerp(4, 22, b) * (r() < 0.15 ? -0.4 : 1),
+        styleFn: (b, r) => {
+          const size = (0.3 + r() * 0.6) * 0.9;
+          const alpha = lerp(0.3, 0.95, r());
+          return { size, color: `rgba(255,250,236,${alpha.toFixed(2)})` };
+        },
+      });
+ 
+      // ---- flare / sparkle, positioned wherever the shape's brightest point is ----
+      const flareT = sampler.sToT(flareS);
+      const flareP = shape.posAt(flareT);
+      const flareX = flareP.x, flareY = flareP.y;
+ 
+      ctx.save();
+      ctx.filter = 'blur(18px)';
+      const flareGlow = ctx.createRadialGradient(flareX, flareY, 0, flareX, flareY, 60);
+      flareGlow.addColorStop(0, 'rgba(255,246,218,0.9)');
+      flareGlow.addColorStop(1, 'rgba(255,246,218,0)');
+      ctx.fillStyle = flareGlow;
+      ctx.beginPath(); ctx.arc(flareX, flareY, 60, 0, Math.PI * 2); ctx.fill();
+      ctx.restore();
+ 
+      ctx.save();
+      ctx.strokeStyle = 'rgba(255,250,240,0.95)';
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      ctx.moveTo(flareX, flareY - 42); ctx.lineTo(flareX, flareY + 42);
+      ctx.moveTo(flareX - 42, flareY); ctx.lineTo(flareX + 42, flareY);
+      ctx.stroke();
+      ctx.lineWidth = 0.8;
+      ctx.globalAlpha = 0.6;
+      ctx.beginPath();
+      ctx.moveTo(flareX - 18, flareY - 18); ctx.lineTo(flareX + 18, flareY + 18);
+      ctx.moveTo(flareX - 18, flareY + 18); ctx.lineTo(flareX + 18, flareY - 18);
+      ctx.stroke();
+      ctx.restore();
+ 
+      ctx.fillStyle = '#fffdf5';
+      ctx.beginPath(); ctx.arc(flareX, flareY, 3.5, 0, Math.PI * 2); ctx.fill();
+ 
+      ctx.restore(); // ---- end circle clip ----
+ 
+      // ---- gold ring framing the circle, poster-style ----
+      ctx.save();
+      ctx.strokeStyle = '#cdbb8c';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(cx, cy, RING_R, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.strokeStyle = 'rgba(196,171,120,0.5)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(cx, cy, RING_R + 9, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+ 
+      // ---- text, in the mat above/below the ring ----
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#3a2f22';
+      ctx.font = "500 19px 'Cinzel', serif";
+      drawTracked(ctx, 'SIGNATURE OF THE SKY', WIDTH / 2, 108, 5);
+ 
+      // personalized subtitle — only present for the date-derived shapes
+      let subtitle = '';
+      if (shape.meta) {
+        if (shape.meta.sign) {
+          const info = ZODIAC_INFO[shape.meta.sign];
+          subtitle = `${shape.meta.sign.toUpperCase()}  ${info.symbol}  ·  ${info.range}`;
+        } else if (shape.meta.phase !== undefined) {
+          subtitle = moonPhaseName(shape.meta.phase);
+        } else if (shape.meta.number) {
+          subtitle = `LIFE PATH NUMBER ${shape.meta.number}`;
+        }
+      }
+      if (subtitle) {
+        ctx.fillStyle = '#584a33';
+        ctx.font = "500 14px 'Cormorant Garamond', serif";
+        drawTracked(ctx, subtitle, WIDTH / 2, 758, 3);
+      }
+ 
+      ctx.fillStyle = '#584a33';
+      ctx.font = "500 15px 'Cormorant Garamond', serif";
+      drawTracked(ctx, "STARS YOU'VE BEEN BORN UNDER", WIDTH / 2, 806, 4);
+ 
+      // ---- grain, applied last ----
+      applyFilmGrain(ctx, WIDTH, HEIGHT, seed, cx, cy, RING_R);
+    }
+ 
+    function drawTracked(ctx, text, centerX, y, spacing) {
+      const widths = [...text].map(ch => ctx.measureText(ch).width);
+      const totalWidth = widths.reduce((a, b) => a + b, 0) + spacing * (text.length - 1);
+      let x = centerX - totalWidth / 2;
+      const prevAlign = ctx.textAlign;
+      ctx.textAlign = 'left';
+      [...text].forEach((ch, i) => {
+        ctx.fillText(ch, x, y);
+        x += widths[i] + spacing;
+      });
+      ctx.textAlign = prevAlign;
+    }
+ 
+    // Discrete-speckle grain: thousands of tiny hard-edged near-black and
+    // near-white dots drawn directly onto the canvas. Inside the ring this
+    // reads as dust texture against the night sky; outside the ring (on
+    // the mat) it's toned down to a faint paper-grain, close to the mat
+    // color, instead of high-contrast black/white flecks.
+    function applyFilmGrain(ctx, width, height, seed, cx, cy, ringR) {
+      const rand = makeRand(seed + 777);
+      const speckleCount = Math.round(width * height * 0.045);
+      for (let i = 0; i < speckleCount; i++) {
+        const x = rand() * width;
+        const y = rand() * height;
+        const inside = (x - cx) ** 2 + (y - cy) ** 2 <= ringR * ringR;
+        const dark = rand() < 0.52;
+        if (inside) {
+          const size = 0.3 + rand() * (dark ? 0.65 : 0.5);
+          const alpha = dark ? 0.12 + rand() * 0.45 : 0.1 + rand() * 0.35;
+          ctx.fillStyle = dark ? `rgba(0,0,0,${alpha.toFixed(2)})` : `rgba(255,255,255,${alpha.toFixed(2)})`;
+          ctx.beginPath();
+          ctx.arc(x, y, size, 0, Math.PI * 2);
+          ctx.fill();
+        } else {
+          const size = 0.3 + rand() * 0.5;
+          const alpha = 0.03 + rand() * 0.05;
+          ctx.fillStyle = dark ? `rgba(150,130,95,${alpha.toFixed(2)})` : `rgba(255,252,240,${alpha.toFixed(2)})`;
+          ctx.beginPath();
+          ctx.arc(x, y, size, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+    }
+ 
+    function redraw() {
+      buildCard(document.getElementById('date-input').value, currentShapeKind);
+    }
+ 
+    document.getElementById('redraw-btn').addEventListener('click', redraw);
+ 
+    document.querySelectorAll('#shape-tabs button').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('#shape-tabs button').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        currentShapeKind = btn.dataset.shape;
+        redraw();
+      });
+    });
+ 
+
+    const OWk = 'download1';
+    const isOwner = new URLSearchParams(window.location.search).get('key') === OWk;
+    if (isOwner) {
+      document.getElementById('download-btn').style.display = '';
+    }
+ 
+    document.getElementById('download-btn').addEventListener('click', () => {
+      const canvas = document.getElementById('card-canvas');
+      const dateStr = document.getElementById('date-input').value;
+      const link = document.createElement('a');
+      link.download = `signature-of-the-sky-${dateStr}-${currentShapeKind}.png`;
+      link.href = canvas.toDataURL('image/png');
+      link.click();
+    });
+ 
+    const cardCanvas = document.getElementById('card-canvas');
+    cardCanvas.addEventListener('contextmenu', (e) => e.preventDefault());
+    cardCanvas.setAttribute('draggable', 'false');
+    cardCanvas.addEventListener('dragstart', (e) => e.preventDefault());
+ 
+    window.addEventListener('load', redraw);
+  </script>
+</body>
+</html>
+ 
