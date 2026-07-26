@@ -81,6 +81,21 @@
     box-shadow: 0 8px 40px rgba(0,0,0,0.6); border-radius: 4px; flex-shrink: 0;
     -webkit-user-drag: none; user-select: none;
   }
+ 
+  .poster-frame { position: relative; flex-shrink: 0; }
+ 
+  /* Preview-only watermark: lives in the DOM on top of the canvas, so it
+     never touches the actual pixels of the high-res export. Screenshots
+     of the preview inherit it; downloads don't. */
+  .watermark-overlay {
+    position: absolute; inset: 0; overflow: hidden; pointer-events: none;
+    display: flex; flex-direction: column; justify-content: space-evenly;
+    transform: rotate(-27deg) scale(1.5); transform-origin: center;
+  }
+  .watermark-row {
+    font-family: 'Cinzel', serif; font-size: 11px; letter-spacing: 3px;
+    color: rgba(255,255,255,0.16); white-space: nowrap; text-align: center;
+  }
 </style>
 </head>
 <body>
@@ -111,13 +126,16 @@
   </div>
  
   <div class="poster-wrap">
-    <canvas id="card-canvas"></canvas>
+    <div class="poster-frame">
+      <canvas id="card-canvas"></canvas>
+      <div class="watermark-overlay" id="watermark-overlay"></div>
+    </div>
   </div>
  <!-- Cloudflare Web Analytics --><script type='module' src='https://static.cloudflareinsights.com/beacon.min.js' data-cf-beacon='{"token": "6843f1cde8ca49da88532867236a0892"}'></script><!-- End Cloudflare Web Analytics -->
  
   <script>
     const WIDTH = 700, HEIGHT = 900;
-    const DISPLAY_WIDTH = 320;
+    const DISPLAY_WIDTH = 460;
     const DISPLAY_HEIGHT = Math.round(DISPLAY_WIDTH * (HEIGHT / WIDTH));
     const DPR = Math.min(window.devicePixelRatio || 1, 2);
     // Scale factor used for the print/download export. 700x900 * 6 = 4200x5400px,
@@ -809,6 +827,23 @@
       document.getElementById('download-btn').style.display = '';
     }
  
+    // Tiled "PREVIEW" watermark, shown only to non-owners. It's a plain DOM
+    // overlay sitting on top of the canvas (see .watermark-overlay), not
+    // anything drawn into the canvas itself, so it can't leak into the
+    // exported PNG and doesn't need to be scrubbed out at export time.
+    (function setupWatermark() {
+      const overlay = document.getElementById('watermark-overlay');
+      if (isOwner) { overlay.style.display = 'none'; return; }
+      const rowCount = 14;
+      const word = Array(6).fill('PREVIEW').join('&nbsp;&nbsp;·&nbsp;&nbsp;');
+      for (let i = 0; i < rowCount; i++) {
+        const row = document.createElement('div');
+        row.className = 'watermark-row';
+        row.innerHTML = word;
+        overlay.appendChild(row);
+      }
+    })();
+ 
     // High-res export: builds an entirely separate, detached canvas at
     // EXPORT_SCALE (4200x5400px) rather than exporting whatever the small
     // on-screen preview canvas happens to contain. toBlob is used instead
@@ -857,3 +892,4 @@
   </script>
 </body>
 </html>
+ 
